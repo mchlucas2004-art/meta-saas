@@ -1,25 +1,16 @@
 import { NextResponse } from "next/server";
-import { getSessionCookieName, verifySession } from "@/lib/auth";
+import { verifySession } from "@/lib/auth";
 
 export const runtime = "nodejs";
-
-function getCookie(req: Request, name: string) {
-  const cookieHeader = req.headers.get("cookie") || "";
-  const match = cookieHeader
-    .split(";")
-    .map((s) => s.trim())
-    .find((c) => c.startsWith(name + "="));
-  if (!match) return null;
-  return decodeURIComponent(match.split("=")[1] || "");
-}
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   try {
-    const token = getCookie(req, getSessionCookieName());
-    if (!token) return NextResponse.json({ verified: false, email: null });
-
-    const payload = await verifySession(token);
-    return NextResponse.json({ verified: true, email: payload.email });
+    const session = await verifySession(req);
+    return NextResponse.json({
+      verified: !!session?.verified,
+      email: session?.email ?? null,
+    });
   } catch {
     return NextResponse.json({ verified: false, email: null });
   }
