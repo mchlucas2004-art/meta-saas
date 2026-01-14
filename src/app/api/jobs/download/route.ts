@@ -1,46 +1,40 @@
 import { NextResponse } from "next/server";
-import { jobOutputPath, cleanupOldJobs } from "@/lib/storage";
 import fs from "fs";
-import { getSessionCookieName, verifySession } from "@/lib/auth";
+import { jobOutputPath } from "@/lib/storage";
+import { verifySession } from "@/lib/auth";
 
 export const runtime = "nodejs";
-
-function getCookie(req: Request, name: string) {
-  const cookieHeader = (req.headers.get("cookie") || "").toString();
-  const match = cookieHeader
-    .split(";")
-    .map((s) => s.trim())
-    .find((c) => c.startsWith(name + "="));
-  if (!match) return null;
-  return decodeURIComponent(match.split("=")[1] || "");
-}
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(req: Request) {
-  // ✅ HARD GATE: must be verified
-  const sessionToken = getCookie(req, getSessionCookieName());
-  if (!sessionToken) {
-    return NextResponse.json({ ok: false, error: "EMAIL_REQUIRED" }, { status: 401 });
-  }
+  // ✅ Auth via cookie (verifySession lit le cookie depuis req.headers)
   try {
-    await verifySession(sessionToken);
+    const session = await verifySession(req);
+    if (!session?.verified) {
+      return NextResponse.json({ ok: false, error: "EMAIL_REQUIRED" }, { status: 401 });
+    }
   } catch {
     return NextResponse.json({ ok: false, error: "EMAIL_REQUIRED" }, { status: 401 });
   }
 
-  cleanupOldJobs(Number(process.env.FILE_TTL_MINUTES || "60"));
-
   const url = new URL(req.url);
-  const jobId = url.searchParams.get("jobId") || "";
+  const jobId = url.searchParams.get("jobId");
   const ext = url.searchParams.get("ext") || "bin";
 
-  const outputPath = jobOutputPath(jobId, ext);
-  if (!fs.existsSync(outputPath)) {
-    return NextResponse.json({ ok: false, error: "File expired or missing" }, { status: 404 });
+  if (!jobId) {
+    return NextResponse.json({ ok: false, error: "Missing jobId" }, { status: 400 });
   }
 
-  const data = fs.readFileSync(outputPath);
+  const outPath = jobOutputPath(jobId, ext);
 
-  return new NextResponse(data, {
+  if (!fs.existsSync(outPath)) {
+    return NextResponse.json({ ok: false, error: "File not ready" }, { status: 404 });
+  }
+
+  const buf = fs.readFileSync(outPath);
+
+  return new NextResponse(buf, {
     headers: {
       "Content-Type": "application/octet-stream",
       "Content-Disposition": `attachment; filename="cleaned.${ext}"`,
