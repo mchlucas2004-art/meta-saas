@@ -1,15 +1,27 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { ScanSchema } from "@/lib/validate";
 import { randomToken } from "@/lib/crypto";
+import { ScanSchema } from "@/lib/validate";
 import { verifySession } from "@/lib/auth";
+import { jobInputPath } from "@/lib/storage";
+import { scanImage, scanVideo } from "@/lib/metadata";
+import fs from "fs";
+import path from "path";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300; // ⚠️ si ton plan Vercel limite, ça capera quand même
 
 function extFromName(name: string) {
   const parts = name.split(".");
   return (parts[parts.length - 1] || "bin").toLowerCase();
+}
+
+async function downloadToFile(url: string, outPath: string) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Blob download failed (${res.status})`);
+  const ab = await res.arrayBuffer();
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, Buffer.from(ab));
 }
 
 export async function POST(req: NextRequest) {
@@ -19,58 +31,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "EMAIL_REQUIRED" }, { status: 401 });
     }
 
-    // ✅ JSON only
+    // ✅ JSON attendu: { kind, blobUrl, originalName }
     const body = await req.json();
 
     const kind = ScanSchema.parse({ kind: body.kind }).kind;
     const blobUrl = String(body.blobUrl || "");
     const originalName = String(body.originalName || "");
 
-    if (!blobUrl || !blobUrl.startsWith("http")) {
+    if (!blobUrl) {
       return NextResponse.json({ ok: false, error: "Missing blobUrl" }, { status: 400 });
     }
 
-    // ✅ jobId sans upload serveur
     const jobId = randomToken(12);
     const ext = extFromName(originalName || (kind === "image" ? "image.jpg" : "video.mp4"));
+    const inputPath = jobInputPath(jobId, ext);
 
-    /**
-     * ✅ IMPORTANT:
-     * Sur Vercel Serverless, télécharger/ffprobe un gros fichier peut dépasser 60s.
-     * Donc on fait un "scan rapide" ici: HEAD + infos de base.
-     * Les métadonnées profondes (EXIF complet / vidéo) doivent être faites dans un job plus long
-     * (Vercel Pro maxDuration > 60, ou worker externe).
-     */
-    const head = await fetch(blobUrl, { method: "HEAD" });
+    // ✅ download blob -> file
+    await downloadToFile(blobUrl, inputPath);
 
-    if (!head.ok) {
-      return NextResponse.json({ ok: false, error: `Blob HEAD failed (${head.status})` }, { status: 400 });
-    }
-
-    const contentType = head.headers.get("content-type") || null;
-    const contentLength = head.headers.get("content-length");
-    const size = contentLength ? Number(contentLength) : null;
-
-    // ✅ meta minimale, rapide, zéro timeout
-    const meta = {
-      kind,
-      blobUrl,
-      originalName: originalName || null,
-      contentType,
-      size,
-      note:
-        "Scan rapide (HEAD). Pour metadata complète sur gros fichiers: utiliser un traitement long (Pro/worker).",
-    };
+    // ✅ scan metadata
+    const meta = kind === "image" ? await scanImage(inputPath) : await scanVideo(inputPath);
 
     return NextResponse.json({
       ok: true,
       jobId,
       ext,
       meta,
-      originalName: originalName || undefined,
-      blobUrl,
+      originalName: originalName || `input.${ext}`,
     });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "error" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: e?.message || "error" },
+      { status: 400 }
+    );
   }
 }

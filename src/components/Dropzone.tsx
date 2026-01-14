@@ -2,14 +2,12 @@
 
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
-import { upload } from "@vercel/blob/client";
 
 export type ScanResult = {
   jobId: string;
   ext: string;
   meta: any;
   originalName?: string;
-  blobUrl?: string;
 };
 
 export function Dropzone({
@@ -29,43 +27,85 @@ export function Dropzone({
 
   const pick = () => inputRef.current?.click();
 
+  async function uploadToBlob(file: File) {
+    // 1) demande une URL d’upload à /api/blob/upload (flow Vercel Blob)
+    const res = await fetch("/api/blob/upload", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: file.name,
+        contentType: file.type,
+      }),
+    });
+
+    if (res.status === 401) {
+      onNeedEmail();
+      throw new Error("EMAIL_REQUIRED");
+    }
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(t || `Upload init failed (${res.status})`);
+    }
+
+    const json = await res.json();
+    // handleUpload retourne un objet avec "url" (upload URL) + "blob" après completion selon la version
+    // Dans la pratique, on s’appuie sur `json.url` pour PUT le fichier, puis `json.blob.url` OU `json.url` selon lib.
+    const uploadUrl = json?.url;
+    if (!uploadUrl) throw new Error("Missing upload url from /api/blob/upload");
+
+    // 2) PUT direct vers Vercel Blob
+    const put = await fetch(uploadUrl, {
+      method: "PUT",
+      body: file,
+      headers: {
+        "content-type": file.type || "application/octet-stream",
+      },
+    });
+
+    if (!put.ok) {
+      const t = await put.text().catch(() => "");
+      throw new Error(t || `Blob PUT failed (${put.status})`);
+    }
+
+    // 3) l’URL publique du blob est renvoyée par le header "Location" sur certaines configs,
+    // sinon on retombe sur uploadUrl sans query.
+    const location = put.headers.get("Location");
+    const blobUrl = location || uploadUrl.split("?")[0];
+
+    return blobUrl;
+  }
+
   async function scanFile(file: File) {
     setErr(null);
     setBusy(true);
 
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 55_000); // un peu < 60s
+    const t = setTimeout(() => controller.abort(), 290_000); // ~4m50 (doit être < maxDuration côté serveur)
 
     try {
-      // ✅ Si pas vérifié, on ouvre l’email gate direct
       if (!verified) {
         onNeedEmail();
-        setBusy(false);
-        clearTimeout(t);
         return;
       }
 
-      // ✅ 1) Upload vers Vercel Blob (support gros fichiers)
-      const blob = await upload(file.name, file, {
-        access: "private",
-        handleUploadUrl: "/api/blob/upload",
-      });
+      // ✅ Upload direct Blob (évite 413)
+      const blobUrl = await uploadToBlob(file);
 
-      // ✅ 2) Scan (rapide) via blobUrl, JSON
+      // ✅ Scan via JSON (évite gros body)
       const res = await fetch("/api/jobs/scan", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        signal: controller.signal,
         body: JSON.stringify({
           kind,
-          blobUrl: blob.url,
+          blobUrl,
           originalName: file.name,
         }),
+        signal: controller.signal,
       });
 
       if (res.status === 401) {
         onNeedEmail();
-        throw new Error("EMAIL_REQUIRED");
+        return;
       }
 
       if (!res.ok) {
@@ -73,33 +113,28 @@ export function Dropzone({
         throw new Error(text || `Scan failed (${res.status})`);
       }
 
-      const json = (await res.json()) as any;
+      const json = (await res.json()) as Partial<ScanResult> & { ok?: boolean; error?: string };
 
-      if (!json?.ok) throw new Error(json?.error || "Scan failed");
+      if (json?.ok === false) throw new Error(json.error || "Scan failed");
+      if (!json.jobId) throw new Error("Missing jobId from API");
 
       const safe: ScanResult = {
         jobId: json.jobId,
         ext: json.ext || (kind === "image" ? "jpg" : "mp4"),
         meta: json.meta ?? {},
         originalName: json.originalName || file.name,
-        blobUrl: json.blobUrl || blob.url,
       };
 
       onScanned(safe);
     } catch (e: any) {
       console.error(e);
-
       if (e?.name === "AbortError") {
-        setErr("⏳ Timeout: le scan a pris trop de temps. Regarde les logs Vercel.");
-        return;
+        setErr("⏳ Timeout: le scan a pris trop de temps. (vidéo lourde = besoin d’un plan qui autorise >60s)");
+      } else if (String(e?.message || "").includes("EMAIL_REQUIRED")) {
+        setErr("Email requis pour analyser.");
+      } else {
+        setErr("Impossible d’analyser le fichier. Regarde les logs Vercel (scan).");
       }
-
-      if (String(e?.message || "").includes("EMAIL_REQUIRED")) {
-        setErr("Email requis. Ouvre la validation email puis réessaie.");
-        return;
-      }
-
-      setErr("Impossible d’analyser le fichier. Regarde les logs Vercel.");
     } finally {
       clearTimeout(t);
       setBusy(false);

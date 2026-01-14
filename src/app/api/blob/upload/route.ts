@@ -7,23 +7,20 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
-  // Le body est envoyé par @vercel/blob/client (upload(...))
-  const body = (await request.json()) as HandleUploadBody;
-
   try {
-    // ✅ on check la session (si ton verifySession attend NextRequest)
     const session = await verifySession(request);
     if (!session?.verified) {
       return NextResponse.json({ error: "EMAIL_REQUIRED" }, { status: 401 });
     }
 
+    const body = (await request.json()) as HandleUploadBody;
+
     const jsonResponse = await handleUpload({
       body,
       request,
-
-      // ✅ contrôle sécurité: taille + types
       onBeforeGenerateToken: async (pathname: string) => {
-        // pathname = nom de fichier
+        // ✅ Sécurité + limites (tu peux ajuster)
+        const maxMb = Number(process.env.MAX_FILE_MB || "200");
         return {
           allowedContentTypes: [
             "image/jpeg",
@@ -35,21 +32,20 @@ export async function POST(request: NextRequest) {
             "video/quicktime",
             "video/webm",
           ],
-          // adapte si tu veux (en bytes)
-          maximumSizeInBytes: Number(process.env.MAX_FILE_BYTES || 1024 * 1024 * 1024), // 1GB par défaut
+          maximumSizeInBytes: maxMb * 1024 * 1024,
           tokenPayload: JSON.stringify({ pathname }),
+          // ⚠️ NE PAS mettre `access:` ici → ça dépend des versions, et ça te casse le type
         };
       },
-
       onUploadCompleted: async () => {
-        // optionnel: log, etc.
+        // Optionnel: logs, analytics, etc.
       },
     });
 
     return NextResponse.json(jsonResponse);
   } catch (e: any) {
     return NextResponse.json(
-      { error: e?.message || "UPLOAD_FAILED" },
+      { error: e?.message || "upload_error" },
       { status: 400 }
     );
   }
