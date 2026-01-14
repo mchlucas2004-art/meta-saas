@@ -6,6 +6,8 @@ import { scanImage, scanVideo } from "@/lib/metadata";
 import fs from "fs";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function extFromFilename(name: string) {
   const parts = name.split(".");
@@ -18,11 +20,16 @@ export async function POST(req: Request) {
     const kind = ScanSchema.parse({ kind: form.get("kind") }).kind;
     const file = form.get("file") as File | null;
 
-    if (!file) return NextResponse.json({ ok: false, error: "Missing file" }, { status: 400 });
+    if (!file) {
+      return NextResponse.json({ ok: false, error: "Missing file" }, { status: 400 });
+    }
 
     const maxMb = Number(process.env.MAX_FILE_MB || "200");
     if (file.size > maxMb * 1024 * 1024) {
-      return NextResponse.json({ ok: false, error: `File too large (max ${maxMb}MB)` }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: `File too large (max ${maxMb}MB)` },
+        { status: 400 }
+      );
     }
 
     const jobId = randomToken(12);
@@ -34,12 +41,13 @@ export async function POST(req: Request) {
 
     const meta = kind === "image" ? await scanImage(inputPath) : await scanVideo(inputPath);
 
+    // ✅ IMPORTANT: renvoyer directement les champs (pas dans data)
     return NextResponse.json({
       ok: true,
       jobId,
       ext,
       meta,
-      originalName: file.name, // ✅
+      originalName: file.name,
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "error" }, { status: 400 });

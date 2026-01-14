@@ -31,9 +31,8 @@ export function Dropzone({
     setErr(null);
     setBusy(true);
 
-    // ✅ Timeout + abort pour éviter "Analyse..." infini en prod
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 25_000);
+    const timeout = setTimeout(() => controller.abort(), 25_000);
 
     try {
       const form = new FormData();
@@ -51,10 +50,11 @@ export function Dropzone({
         throw new Error(text || `Scan failed (${res.status})`);
       }
 
-      const json = (await res.json()) as Partial<ScanResult>;
+      const json = (await res.json()) as Partial<ScanResult> & { ok?: boolean; error?: string };
 
-      // ✅ garde-fou si l'API renvoie un payload incomplet
+      if (json.ok === false) throw new Error(json.error || "Scan failed");
       if (!json.jobId) throw new Error("Missing jobId from API");
+
       const safe: ScanResult = {
         jobId: json.jobId,
         ext: json.ext || (kind === "image" ? "jpg" : "mp4"),
@@ -65,20 +65,23 @@ export function Dropzone({
       onScanned(safe);
     } catch (e: any) {
       console.error(e);
+
       if (e?.name === "AbortError") {
-        setErr("⏳ Timeout: le scan a pris trop de temps. Réessaie (ou test un fichier plus léger).");
+        setErr(
+          "⏳ Timeout: le scan a pris trop de temps. Fichier trop lourd ou API en échec (regarde les logs Vercel)."
+        );
       } else {
         setErr("Impossible d’analyser le fichier. Réessaie (ou regarde les logs Vercel).");
       }
     } finally {
-      clearTimeout(t);
+      clearTimeout(timeout);
       setBusy(false);
     }
   }
 
   return (
     <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
-      <div className="border border-dashed border-white/10 rounded-3xl p-10 text-center">
+      <div className="rounded-3xl border border-dashed border-white/10 p-10 text-center">
         <div className="text-2xl font-semibold">
           Dépose ton {kind === "image" ? "image" : "vidéo"} ici
         </div>
