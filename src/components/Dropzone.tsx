@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { upload } from "@vercel/blob/client";
 import { Button } from "@/components/ui/Button";
 
 export type ScanResult = {
@@ -31,29 +32,48 @@ export function Dropzone({
     setErr(null);
     setBusy(true);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25_000);
-
     try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("kind", kind);
+      if (!verified) {
+        onNeedEmail();
+        throw new Error("EMAIL_REQUIRED");
+      }
+
+      // 1) ✅ upload direct vers Vercel Blob (évite 413)
+      const blob = await upload(file.name, file, {
+        access: "public",
+        handleUploadUrl: "/api/blob/upload",
+      });
+
+      // 2) ✅ appel scan léger avec URL blob (évite timeout)
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 25_000);
 
       const res = await fetch("/api/jobs/scan", {
         method: "POST",
-        body: form,
+        headers: { "Content-Type": "application/json" },
         signal: controller.signal,
-      });
+        body: JSON.stringify({
+          kind,
+          blobUrl: blob.url,
+          originalName: file.name,
+        }),
+      }).finally(() => clearTimeout(t));
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(text || `Scan failed (${res.status})`);
       }
 
-      const json = (await res.json()) as Partial<ScanResult> & { ok?: boolean; error?: string };
+      const json = (await res.json()) as any;
 
-      if (json.ok === false) throw new Error(json.error || "Scan failed");
-      if (!json.jobId) throw new Error("Missing jobId from API");
+      if (json?.error === "EMAIL_REQUIRED") {
+        onNeedEmail();
+        throw new Error("EMAIL_REQUIRED");
+      }
+
+      if (!json?.ok || !json?.jobId) {
+        throw new Error(json?.error || "Bad scan payload");
+      }
 
       const safe: ScanResult = {
         jobId: json.jobId,
@@ -67,21 +87,20 @@ export function Dropzone({
       console.error(e);
 
       if (e?.name === "AbortError") {
-        setErr(
-          "⏳ Timeout: le scan a pris trop de temps. Fichier trop lourd ou API en échec (regarde les logs Vercel)."
-        );
+        setErr("⏳ Timeout: le scan a pris trop de temps (regarde les logs Vercel).");
+      } else if (String(e?.message || "").includes("EMAIL_REQUIRED")) {
+        setErr("Email requis pour uploader/analyser.");
       } else {
-        setErr("Impossible d’analyser le fichier. Réessaie (ou regarde les logs Vercel).");
+        setErr("Impossible d’analyser le fichier. Regarde les logs Vercel.");
       }
     } finally {
-      clearTimeout(timeout);
       setBusy(false);
     }
   }
 
   return (
     <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
-      <div className="rounded-3xl border border-dashed border-white/10 p-10 text-center">
+      <div className="border border-dashed border-white/10 rounded-3xl p-10 text-center">
         <div className="text-2xl font-semibold">
           Dépose ton {kind === "image" ? "image" : "vidéo"} ici
         </div>
