@@ -4,12 +4,10 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 
 export type ScanResult = {
-  fileName: string;
-  mime: string;
-  size: number;
-  raw?: any;
-  gpsDetected?: boolean;
-  jobId?: string;
+  jobId: string;
+  ext: string;
+  meta: any;
+  originalName?: string;
 };
 
 export function Dropzone({
@@ -48,13 +46,24 @@ export function Dropzone({
         throw new Error(text || `Scan failed (${res.status})`);
       }
 
-      const json = (await res.json()) as ScanResult;
-      onScanned(json);
+      const json = (await res.json()) as any;
+
+      // ✅ normalize to always match ScanResult shape (avoids TS + runtime issues)
+      const normalized: ScanResult = {
+        jobId: String(json.jobId ?? ""),
+        ext: String(json.ext ?? ""),
+        meta: json.meta ?? {},
+        originalName: file?.name,
+      };
+
+      if (!normalized.jobId) {
+        throw new Error("Réponse API invalide: jobId manquant.");
+      }
+
+      onScanned(normalized);
     } catch (e: any) {
       console.error(e);
-      setErr(
-        "Impossible d’analyser le fichier. Réessaie (ou regarde les logs Vercel)."
-      );
+      setErr("Impossible d’analyser le fichier. Réessaie (ou regarde les logs Vercel).");
     } finally {
       // ✅ CRITICAL: always unlock UI
       setBusy(false);
@@ -64,7 +73,10 @@ export function Dropzone({
   return (
     <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
       <div className="border border-dashed border-white/10 rounded-3xl p-10 text-center">
-        <div className="text-2xl font-semibold">Dépose ton {kind === "image" ? "image" : "vidéo"} ici</div>
+        <div className="text-2xl font-semibold">
+          Dépose ton {kind === "image" ? "image" : "vidéo"} ici
+        </div>
+
         <div className="mt-2 text-white/60">
           On analyse les métadonnées (GPS, date, appareil, tags…).
           <br />
@@ -83,11 +95,7 @@ export function Dropzone({
           )}
         </div>
 
-        {err && (
-          <div className="mt-4 text-sm text-red-400">
-            {err}
-          </div>
-        )}
+        {err && <div className="mt-4 text-sm text-red-400">{err}</div>}
 
         <input
           ref={inputRef}

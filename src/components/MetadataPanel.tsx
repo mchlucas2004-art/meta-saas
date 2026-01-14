@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Card } from "./ui/Card";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
+import type { ScanResult } from "@/components/Dropzone";
 
 function IconButton({
   title,
@@ -104,7 +105,7 @@ export function MetadataPanel({
   onReset,
 }: {
   kind: "image" | "video";
-  scan: { jobId: string; ext: string; meta: any; originalName?: string } | null;
+  scan: ScanResult | null;
   verified: boolean;
   email: string | null;
   onNeedEmail: () => void;
@@ -202,7 +203,7 @@ export function MetadataPanel({
           <div>
             <div className="text-xs text-white/50">Fichier</div>
             <div className="mt-1 text-sm font-semibold text-white">
-              {scan.originalName || `input.${scan.ext}`}
+              {scan.originalName || `input.${scan.ext || "bin"}`}
             </div>
           </div>
 
