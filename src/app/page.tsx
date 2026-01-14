@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Dropzone, ScanResult } from "@/components/Dropzone";
+import { Dropzone } from "@/components/Dropzone";
+import type { ScanResult } from "@/components/Dropzone";
 import { EmailGateModal } from "@/components/EmailGateModal";
 import { MetadataPanel } from "@/components/MetadataPanel";
 
@@ -28,6 +29,7 @@ export default function Home() {
 
   const openGate = () => setGateOpen(true);
 
+  // ✅ session status
   async function refreshStatus() {
     try {
       const res = await fetch("/api/auth/status");
@@ -44,6 +46,7 @@ export default function Home() {
     refreshStatus();
   }, []);
 
+  // ✅ restore scan after /verified -> /?resume=1
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!resume) return;
@@ -59,6 +62,7 @@ export default function Home() {
         setKind(saved.kind);
         setScan(saved.scan);
 
+        // clean URL
         const url = new URL(window.location.href);
         url.searchParams.delete("resume");
         window.history.replaceState({}, "", url.pathname);
@@ -70,11 +74,13 @@ export default function Home() {
 
   const onScanned = (r: ScanResult) => {
     setScan(r);
+
     try {
       const payload: SavedScan = { kind, scan: r };
       localStorage.setItem(LS_KEY, JSON.stringify(payload));
     } catch {}
 
+    // si pas vérifié, modal email
     if (!verified) openGate();
   };
 
@@ -85,96 +91,98 @@ export default function Home() {
     } catch {}
   };
 
+  // ✅ règle UI :
+  // - si pas verified => page ultra simple (upload)
+  // - si verified => si scan => interface profil+édition, sinon upload (sans bouton email)
   const showEditor = verified && !!scan;
 
   return (
     <div className="min-h-screen bg-black text-white">
-      <div className="mx-auto max-w-5xl px-6 py-10">
-        {/* ✅ Header: logo only */}
+      <div className="mx-auto max-w-4xl px-6 py-10">
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-12 w-12 rounded-2xl bg-white text-black grid place-items-center font-black text-lg">
+            <div className="h-10 w-10 rounded-2xl bg-white text-black grid place-items-center font-black">
               M
+            </div>
+            <div>
+              <div className="text-lg font-semibold">MetaCleaner</div>
+              <div className="text-xs text-white/60">Images & vidéos • Privacy-first</div>
             </div>
           </div>
 
           <div className="text-xs text-white/60">
-            {verified ? "✅ Connecté" : "Email requis"}
+            {verified ? `✅ ${email || "Connecté"}` : "Email requis"}
           </div>
         </div>
 
-        {/* ✅ BEFORE VERIFIED or BEFORE FILE: landing marketing */}
-        {!showEditor && (
-          <div className="mt-10">
-            <div className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">
-              Privacy-first • Auto-suppression • Images & vidéos
-            </div>
+        {/* HERO */}
+        <div className="mt-10">
+          <div className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">
+            Privacy-first • Auto-suppression • Images & vidéos
+          </div>
 
-            <h1 className="mt-5 text-5xl font-semibold leading-tight">
-              Nettoie ou modifie les <br />
-              métadonnées en 1 clic.
-            </h1>
+          <h1 className="mt-5 text-5xl font-semibold leading-tight">
+            Nettoie ou modifie les <br />
+            métadonnées en 1 clic.
+          </h1>
 
-            <p className="mt-4 text-lg text-white/60 max-w-2xl">
-              EXIF, GPS, dates, tags… Upload → analyse → nettoyage. Les fichiers sont stockés seulement le temps du
-              traitement, puis supprimés automatiquement.
-            </p>
+          <p className="mt-4 text-lg text-white/60 max-w-2xl">
+            EXIF, GPS, dates, tags… Upload → analyse → nettoyage. Les fichiers sont stockés seulement le temps du
+            traitement, puis supprimés automatiquement.
+          </p>
 
-            <div className="mt-8 flex gap-3">
-              <button
-                className={`rounded-2xl px-6 py-3 text-sm font-semibold border transition ${
-                  kind === "image"
-                    ? "border-white/20 bg-white/10"
-                    : "border-white/10 bg-transparent hover:bg-white/5"
-                }`}
-                onClick={() => setKind("image")}
-              >
-                Image
-              </button>
+          <div className="mt-8 flex gap-3">
+            <button
+              className={`rounded-2xl px-6 py-3 text-sm font-semibold border transition ${
+                kind === "image"
+                  ? "border-white/20 bg-white/10"
+                  : "border-white/10 bg-transparent hover:bg-white/5"
+              }`}
+              onClick={() => setKind("image")}
+            >
+              Image
+            </button>
 
-              <button
-                className={`rounded-2xl px-6 py-3 text-sm font-semibold border transition ${
-                  kind === "video"
-                    ? "border-white/20 bg-white/10"
-                    : "border-white/10 bg-transparent hover:bg-white/5"
-                }`}
-                onClick={() => setKind("video")}
-              >
-                Vidéo
-              </button>
-            </div>
+            <button
+              className={`rounded-2xl px-6 py-3 text-sm font-semibold border transition ${
+                kind === "video"
+                  ? "border-white/20 bg-white/10"
+                  : "border-white/10 bg-transparent hover:bg-white/5"
+              }`}
+              onClick={() => setKind("video")}
+            >
+              Vidéo
+            </button>
+          </div>
 
+          {/* Upload */}
+          {!showEditor && (
             <div className="mt-8">
-              <Dropzone kind={kind} onScanned={onScanned} onNeedEmail={openGate} verified={verified} />
+              <Dropzone
+                kind={kind}
+                onScanned={onScanned}
+                onNeedEmail={openGate}
+                verified={verified}
+              />
             </div>
-          </div>
-        )}
+          )}
 
-        {/* ✅ AFTER VERIFIED + FILE: dashboard mode (visually different) */}
-        {showEditor && (
-          <div className="mt-10">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <div className="text-xs text-white/50">Dashboard</div>
-                <div className="text-2xl font-semibold">Modifier les métadonnées</div>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70">
-                {email || "Connecté"}
-              </div>
+          {/* Editor */}
+          {showEditor && (
+            <div className="mt-8">
+              <MetadataPanel
+                kind={kind}
+                scan={scan}
+                verified={verified}
+                email={email}
+                onNeedEmail={openGate}
+                onBecameVerified={() => setVerified(true)}
+                onReset={resetFlow}
+              />
             </div>
-
-            <MetadataPanel
-              kind={kind}
-              scan={scan}
-              verified={verified}
-              email={email}
-              onNeedEmail={openGate}
-              onBecameVerified={() => setVerified(true)}
-              onReset={resetFlow}
-            />
-          </div>
-        )}
+          )}
+        </div>
 
         <EmailGateModal
           open={gateOpen}
