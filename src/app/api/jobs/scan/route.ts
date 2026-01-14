@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { randomToken } from "@/lib/crypto";
 import { ScanSchema } from "@/lib/validate";
 import { verifySession } from "@/lib/auth";
@@ -9,7 +9,7 @@ import path from "path";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // ⚠️ si ton plan Vercel limite, ça capera quand même
+export const maxDuration = 300;
 
 function extFromName(name: string) {
   const parts = name.split(".");
@@ -19,19 +19,22 @@ function extFromName(name: string) {
 async function downloadToFile(url: string, outPath: string) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Blob download failed (${res.status})`);
+
   const ab = await res.arrayBuffer();
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, Buffer.from(ab));
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
     const session = await verifySession(req);
     if (!session?.verified) {
-      return NextResponse.json({ ok: false, error: "EMAIL_REQUIRED" }, { status: 401 });
+      return NextResponse.json(
+        { ok: false, error: "EMAIL_REQUIRED" },
+        { status: 401 }
+      );
     }
 
-    // ✅ JSON attendu: { kind, blobUrl, originalName }
     const body = await req.json();
 
     const kind = ScanSchema.parse({ kind: body.kind }).kind;
@@ -46,11 +49,12 @@ export async function POST(req: NextRequest) {
     const ext = extFromName(originalName || (kind === "image" ? "image.jpg" : "video.mp4"));
     const inputPath = jobInputPath(jobId, ext);
 
-    // ✅ download blob -> file
     await downloadToFile(blobUrl, inputPath);
 
-    // ✅ scan metadata
-    const meta = kind === "image" ? await scanImage(inputPath) : await scanVideo(inputPath);
+    const meta =
+      kind === "image"
+        ? await scanImage(inputPath)
+        : await scanVideo(inputPath);
 
     return NextResponse.json({
       ok: true,

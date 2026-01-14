@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { verifySession } from "@/lib/auth";
 
@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
     const session = await verifySession(request);
     if (!session?.verified) {
@@ -18,8 +18,7 @@ export async function POST(request: NextRequest) {
     const jsonResponse = await handleUpload({
       body,
       request,
-      onBeforeGenerateToken: async (pathname: string) => {
-        // ✅ Sécurité + limites (tu peux ajuster)
+      onBeforeGenerateToken: async () => {
         const maxMb = Number(process.env.MAX_FILE_MB || "200");
         return {
           allowedContentTypes: [
@@ -33,12 +32,11 @@ export async function POST(request: NextRequest) {
             "video/webm",
           ],
           maximumSizeInBytes: maxMb * 1024 * 1024,
-          tokenPayload: JSON.stringify({ pathname }),
-          // ⚠️ NE PAS mettre `access:` ici → ça dépend des versions, et ça te casse le type
+          tokenPayload: JSON.stringify({}),
         };
       },
       onUploadCompleted: async () => {
-        // Optionnel: logs, analytics, etc.
+        // rien
       },
     });
 
