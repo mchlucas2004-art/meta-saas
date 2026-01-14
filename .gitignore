@@ -4,3 +4,5 @@ dist
 *.log
 dev.db
 .DS_Store
+.env
+.env
