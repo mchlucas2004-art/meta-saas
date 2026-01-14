@@ -28,13 +28,19 @@ export async function POST(req: Request) {
       data: { leadId: lead.id, tokenHash, expiresAt },
     });
 
-    const appUrl = process.env.APP_URL || "http://localhost:3000";
-    const verifyUrl = `${appUrl}/api/auth/verify?token=${token}`;
+    // ✅ IMPORTANT: build a correct base URL in prod (Vercel)
+    const origin = new URL(req.url).origin;
+
+    // Option A (garde ton flow actuel): lien vers l'API verify
+    const verifyUrl = `${origin}/api/auth/verify?token=${token}`;
 
     await sendVerifyEmail(email, verifyUrl);
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "error" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: e?.message || "error" },
+      { status: 400 }
+    );
   }
 }
