@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { verifySession } from "@/lib/auth";
 
@@ -6,13 +6,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export async function POST(request: Request): Promise<NextResponse> {
+export async function POST(request: NextRequest) {
+  // Le body est envoyé par @vercel/blob/client (upload(...))
   const body = (await request.json()) as HandleUploadBody;
 
   try {
+    // ✅ on check la session (si ton verifySession attend NextRequest)
     const session = await verifySession(request);
-
-    // ✅ Tu peux assouplir si tu veux autoriser upload sans email
     if (!session?.verified) {
       return NextResponse.json({ error: "EMAIL_REQUIRED" }, { status: 401 });
     }
@@ -21,9 +21,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       body,
       request,
 
+      // ✅ contrôle sécurité: taille + types
       onBeforeGenerateToken: async (pathname: string) => {
-        // ⚠️ sécurité: limiter types + taille
-        // (La vraie limite dépend aussi de ton Blob store / plan)
+        // pathname = nom de fichier
         return {
           allowedContentTypes: [
             "image/jpeg",
@@ -35,24 +35,21 @@ export async function POST(request: Request): Promise<NextResponse> {
             "video/quicktime",
             "video/webm",
           ],
-          tokenPayload: JSON.stringify({
-            pathname,
-            email: session.email,
-            leadId: session.leadId,
-          }),
+          // adapte si tu veux (en bytes)
+          maximumSizeInBytes: Number(process.env.MAX_FILE_BYTES || 1024 * 1024 * 1024), // 1GB par défaut
+          tokenPayload: JSON.stringify({ pathname }),
         };
       },
 
-      onUploadCompleted: async ({ blob }) => {
-        // Ici tu peux log / sauvegarder en DB si tu veux.
-        console.log("✅ Blob upload completed:", blob.url);
+      onUploadCompleted: async () => {
+        // optionnel: log, etc.
       },
     });
 
     return NextResponse.json(jsonResponse);
-  } catch (error: any) {
+  } catch (e: any) {
     return NextResponse.json(
-      { error: error?.message || "Upload token error" },
+      { error: e?.message || "UPLOAD_FAILED" },
       { status: 400 }
     );
   }

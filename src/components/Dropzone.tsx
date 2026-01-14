@@ -1,14 +1,15 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { upload } from "@vercel/blob/client";
 import { Button } from "@/components/ui/Button";
+import { upload } from "@vercel/blob/client";
 
 export type ScanResult = {
   jobId: string;
   ext: string;
   meta: any;
   originalName?: string;
+  blobUrl?: string;
 };
 
 export function Dropzone({
@@ -32,32 +33,40 @@ export function Dropzone({
     setErr(null);
     setBusy(true);
 
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 55_000); // un peu < 60s
+
     try {
+      // ✅ Si pas vérifié, on ouvre l’email gate direct
       if (!verified) {
         onNeedEmail();
-        throw new Error("EMAIL_REQUIRED");
+        setBusy(false);
+        clearTimeout(t);
+        return;
       }
 
-      // 1) ✅ upload direct vers Vercel Blob (évite 413)
+      // ✅ 1) Upload vers Vercel Blob (support gros fichiers)
       const blob = await upload(file.name, file, {
-        access: "public",
+        access: "private",
         handleUploadUrl: "/api/blob/upload",
       });
 
-      // 2) ✅ appel scan léger avec URL blob (évite timeout)
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 25_000);
-
+      // ✅ 2) Scan (rapide) via blobUrl, JSON
       const res = await fetch("/api/jobs/scan", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "content-type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
           kind,
           blobUrl: blob.url,
           originalName: file.name,
         }),
-      }).finally(() => clearTimeout(t));
+      });
+
+      if (res.status === 401) {
+        onNeedEmail();
+        throw new Error("EMAIL_REQUIRED");
+      }
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
@@ -66,20 +75,14 @@ export function Dropzone({
 
       const json = (await res.json()) as any;
 
-      if (json?.error === "EMAIL_REQUIRED") {
-        onNeedEmail();
-        throw new Error("EMAIL_REQUIRED");
-      }
-
-      if (!json?.ok || !json?.jobId) {
-        throw new Error(json?.error || "Bad scan payload");
-      }
+      if (!json?.ok) throw new Error(json?.error || "Scan failed");
 
       const safe: ScanResult = {
         jobId: json.jobId,
         ext: json.ext || (kind === "image" ? "jpg" : "mp4"),
         meta: json.meta ?? {},
         originalName: json.originalName || file.name,
+        blobUrl: json.blobUrl || blob.url,
       };
 
       onScanned(safe);
@@ -87,13 +90,18 @@ export function Dropzone({
       console.error(e);
 
       if (e?.name === "AbortError") {
-        setErr("⏳ Timeout: le scan a pris trop de temps (regarde les logs Vercel).");
-      } else if (String(e?.message || "").includes("EMAIL_REQUIRED")) {
-        setErr("Email requis pour uploader/analyser.");
-      } else {
-        setErr("Impossible d’analyser le fichier. Regarde les logs Vercel.");
+        setErr("⏳ Timeout: le scan a pris trop de temps. Regarde les logs Vercel.");
+        return;
       }
+
+      if (String(e?.message || "").includes("EMAIL_REQUIRED")) {
+        setErr("Email requis. Ouvre la validation email puis réessaie.");
+        return;
+      }
+
+      setErr("Impossible d’analyser le fichier. Regarde les logs Vercel.");
     } finally {
+      clearTimeout(t);
       setBusy(false);
     }
   }
