@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Dropzone } from "@/components/Dropzone";
-import type { ScanResult } from "@/components/Dropzone";
+import { Dropzone, type ScanResult } from "@/components/Dropzone";
 import { EmailGateModal } from "@/components/EmailGateModal";
 import { MetadataPanel } from "@/components/MetadataPanel";
 
@@ -159,12 +158,7 @@ export default function Home() {
           {/* Upload */}
           {!showEditor && (
             <div className="mt-8">
-              <Dropzone
-                kind={kind}
-                onScanned={onScanned}
-                onNeedEmail={openGate}
-                verified={verified}
-              />
+              <Dropzone kind={kind} onScanned={onScanned} onNeedEmail={openGate} verified={verified} />
             </div>
           )}
 
@@ -177,7 +171,9 @@ export default function Home() {
                 verified={verified}
                 email={email}
                 onNeedEmail={openGate}
-                onBecameVerified={() => setVerified(true)}
+                onBecameVerified={async () => {
+                  await refreshStatus(); // ✅ récupère email + verified direct
+                }}
                 onReset={resetFlow}
               />
             </div>
