@@ -31,6 +31,10 @@ export function Dropzone({
     setErr(null);
     setBusy(true);
 
+    // ✅ Timeout + abort pour éviter "Analyse..." infini en prod
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 25_000);
+
     try {
       const form = new FormData();
       form.append("file", file);
@@ -39,6 +43,7 @@ export function Dropzone({
       const res = await fetch("/api/jobs/scan", {
         method: "POST",
         body: form,
+        signal: controller.signal,
       });
 
       if (!res.ok) {
@@ -46,26 +51,27 @@ export function Dropzone({
         throw new Error(text || `Scan failed (${res.status})`);
       }
 
-      const json = (await res.json()) as any;
+      const json = (await res.json()) as Partial<ScanResult>;
 
-      // ✅ normalize to always match ScanResult shape (avoids TS + runtime issues)
-      const normalized: ScanResult = {
-        jobId: String(json.jobId ?? ""),
-        ext: String(json.ext ?? ""),
+      // ✅ garde-fou si l'API renvoie un payload incomplet
+      if (!json.jobId) throw new Error("Missing jobId from API");
+      const safe: ScanResult = {
+        jobId: json.jobId,
+        ext: json.ext || (kind === "image" ? "jpg" : "mp4"),
         meta: json.meta ?? {},
-        originalName: file?.name,
+        originalName: json.originalName || file.name,
       };
 
-      if (!normalized.jobId) {
-        throw new Error("Réponse API invalide: jobId manquant.");
-      }
-
-      onScanned(normalized);
+      onScanned(safe);
     } catch (e: any) {
       console.error(e);
-      setErr("Impossible d’analyser le fichier. Réessaie (ou regarde les logs Vercel).");
+      if (e?.name === "AbortError") {
+        setErr("⏳ Timeout: le scan a pris trop de temps. Réessaie (ou test un fichier plus léger).");
+      } else {
+        setErr("Impossible d’analyser le fichier. Réessaie (ou regarde les logs Vercel).");
+      }
     } finally {
-      // ✅ CRITICAL: always unlock UI
+      clearTimeout(t);
       setBusy(false);
     }
   }
@@ -106,7 +112,6 @@ export function Dropzone({
             const f = e.target.files?.[0];
             if (!f) return;
             scanFile(f);
-            // allow re-selecting same file
             e.currentTarget.value = "";
           }}
         />

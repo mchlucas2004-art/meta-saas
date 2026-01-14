@@ -28,10 +28,9 @@ export default function Home() {
 
   const openGate = () => setGateOpen(true);
 
-  // ✅ session status
   async function refreshStatus() {
     try {
-      const res = await fetch("/api/auth/status");
+      const res = await fetch("/api/auth/status", { cache: "no-store" });
       const json = await res.json();
       setVerified(!!json.verified);
       setEmail(json.email || null);
@@ -45,7 +44,7 @@ export default function Home() {
     refreshStatus();
   }, []);
 
-  // ✅ restore scan after /verified -> /?resume=1
+  // restore scan after /verified -> /?resume=1
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!resume) return;
@@ -61,7 +60,6 @@ export default function Home() {
         setKind(saved.kind);
         setScan(saved.scan);
 
-        // clean URL
         const url = new URL(window.location.href);
         url.searchParams.delete("resume");
         window.history.replaceState({}, "", url.pathname);
@@ -79,7 +77,6 @@ export default function Home() {
       localStorage.setItem(LS_KEY, JSON.stringify(payload));
     } catch {}
 
-    // si pas vérifié, modal email
     if (!verified) openGate();
   };
 
@@ -90,9 +87,6 @@ export default function Home() {
     } catch {}
   };
 
-  // ✅ règle UI :
-  // - si pas verified => page ultra simple (upload)
-  // - si verified => si scan => interface profil+édition, sinon upload (sans bouton email)
   const showEditor = verified && !!scan;
 
   return (
@@ -155,14 +149,12 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Upload */}
           {!showEditor && (
             <div className="mt-8">
               <Dropzone kind={kind} onScanned={onScanned} onNeedEmail={openGate} verified={verified} />
             </div>
           )}
 
-          {/* Editor */}
           {showEditor && (
             <div className="mt-8">
               <MetadataPanel
@@ -171,9 +163,7 @@ export default function Home() {
                 verified={verified}
                 email={email}
                 onNeedEmail={openGate}
-                onBecameVerified={async () => {
-                  await refreshStatus(); // ✅ récupère email + verified direct
-                }}
+                onBecameVerified={() => setVerified(true)}
                 onReset={resetFlow}
               />
             </div>
