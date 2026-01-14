@@ -1,42 +1,22 @@
-import fs from "fs";
+// src/lib/storage.ts
 import path from "path";
-import os from "os";
+import fs from "fs";
 
-const baseDir = path.join(os.tmpdir(), "meta-saas");
+const BASE_DIR =
+  process.env.VERCEL
+    ? "/tmp/meta-saas" // ✅ seul endroit writable sur Vercel
+    : path.join(process.cwd(), ".tmp-meta-saas");
 
-export function ensureBaseDir() {
-  if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
-  return baseDir;
-}
-
-export function jobDir(jobId: string) {
-  ensureBaseDir();
-  const dir = path.join(baseDir, jobId);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
+function ensureBaseDir() {
+  if (!fs.existsSync(BASE_DIR)) fs.mkdirSync(BASE_DIR, { recursive: true });
 }
 
 export function jobInputPath(jobId: string, ext: string) {
-  return path.join(jobDir(jobId), `input.${ext}`);
+  ensureBaseDir();
+  return path.join(BASE_DIR, `${jobId}.${ext}`);
 }
 
 export function jobOutputPath(jobId: string, ext: string) {
-  return path.join(jobDir(jobId), `output.${ext}`);
-}
-
-export function cleanupOldJobs(ttlMinutes: number) {
   ensureBaseDir();
-  const now = Date.now();
-  for (const name of fs.readdirSync(baseDir)) {
-    const dir = path.join(baseDir, name);
-    try {
-      const stat = fs.statSync(dir);
-      const ageMin = (now - stat.mtimeMs) / 1000 / 60;
-      if (ageMin > ttlMinutes) {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    } catch {
-      // ignore
-    }
-  }
+  return path.join(BASE_DIR, `${jobId}.out.${ext}`);
 }
