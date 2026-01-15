@@ -1,59 +1,64 @@
 import { NextResponse } from "next/server";
-import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
+import { handleUpload, type HandleUploadBody } from "@vercel/blob/server";
 import { verifySession } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
+  // Client calls this with JSON
+  const body = (await request.json()) as HandleUploadBody;
+
+  // Require verified session to upload
+  const session = await verifySession(request).catch(() => null);
+  if (!session?.verified) {
+    return NextResponse.json({ error: "EMAIL_REQUIRED" }, { status: 401 });
+  }
+
   try {
-    // ✅ protège l’upload (optionnel mais conseillé)
-    const session = await verifySession(request);
-    if (!session?.verified) {
-      return NextResponse.json({ ok: false, error: "EMAIL_REQUIRED" }, { status: 401 });
-    }
-
-    const body = (await request.json()) as HandleUploadBody;
-
     const jsonResponse = await handleUpload({
-      request,
       body,
+      request,
 
+      // IMPORTANT: limit file types + size here if you want
       onBeforeGenerateToken: async (pathname) => {
-        // ⚠️ sécurité + taille max autorisée côté token Blob
+        // You can enforce allowed file extensions
+        const lower = pathname.toLowerCase();
+        const allowed =
+          lower.endsWith(".jpg") ||
+          lower.endsWith(".jpeg") ||
+          lower.endsWith(".png") ||
+          lower.endsWith(".webp") ||
+          lower.endsWith(".heic") ||
+          lower.endsWith(".mp4") ||
+          lower.endsWith(".mov") ||
+          lower.endsWith(".m4v");
+
+        if (!allowed) {
+          throw new Error("FILE_TYPE_NOT_ALLOWED");
+        }
+
         return {
-          allowedContentTypes: [
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/heic",
-            "image/heif",
-            "video/mp4",
-            "video/quicktime",
-            "video/webm",
-          ],
-          // Mets une limite haute si tu veux supporter des gros fichiers
-          // (le vrai plafond dépend aussi de ton plan Vercel Blob)
-          maximumSizeInBytes: 1024 * 1024 * 1024, // 1GB
+          // ✅ Use "public" for now (private complicates fetch). You can harden later.
+          access: "public",
+          contentType: undefined,
           tokenPayload: JSON.stringify({
-            // tu peux mettre des infos si tu veux
-            verified: true,
+            leadId: session.leadId,
+            email: session.email,
           }),
         };
       },
 
-      onUploadCompleted: async ({ blob }) => {
-        // Juste un log serveur utile
-        console.log("✅ Upload completed:", blob.url);
+      onUploadCompleted: async () => {
+        // Optional: log / track uploads
       },
     });
 
-    return NextResponse.json({ ok: true, ...jsonResponse });
+    return NextResponse.json(jsonResponse);
   } catch (e: any) {
-    console.error("❌ /api/blob/upload error:", e);
     return NextResponse.json(
-      { ok: false, error: e?.message || "UPLOAD_FAILED" },
+      { error: e?.message || "UPLOAD_FAILED" },
       { status: 400 }
     );
   }

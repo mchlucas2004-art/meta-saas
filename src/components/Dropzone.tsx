@@ -11,11 +11,6 @@ export type ScanResult = {
   originalName?: string;
 };
 
-type UploadOptionsCompat = {
-  access?: "public" | "private";
-  handleUploadUrl: string;
-};
-
 export function Dropzone({
   kind,
   onScanned,
@@ -52,16 +47,16 @@ export function Dropzone({
     const timeout = setTimeout(() => controller.abort(), 55_000);
 
     try {
-      // ✅ Upload vers Vercel Blob
-      const uploadOpts: UploadOptionsCompat = {
-        access: "private",
+      // ✅ Force pathname string (avoid overload mismatch)
+      const pathname = `${Date.now()}-${file.name}`;
+
+      // 1) Upload to Vercel Blob
+      const blob = await upload(pathname, file, {
+        access: "public",
         handleUploadUrl: "/api/blob/upload",
-      };
+      });
 
-      // ⚠️ cast minimal pour compat si ton @vercel/blob est pas à jour côté types
-      const blob = await upload(file.name, file, uploadOpts as any);
-
-      // ✅ Scan via JSON
+      // 2) Scan via JSON
       const res = await fetch("/api/jobs/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -92,7 +87,7 @@ export function Dropzone({
       console.error(e);
 
       if (e?.name === "AbortError") {
-        setErr("⏳ Timeout: le serveur a mis trop longtemps. Regarde les logs Vercel (scan).");
+        setErr("⏳ Timeout: server took too long. Check Vercel logs (scan).");
       } else {
         setErr("Impossible d’analyser le fichier. Regarde les logs Vercel (upload/scan).");
       }

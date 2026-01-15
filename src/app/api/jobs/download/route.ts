@@ -8,13 +8,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(req: Request) {
-  // ✅ Auth via cookie (verifySession lit le cookie depuis req.headers)
-  try {
-    const session = await verifySession(req);
-    if (!session?.verified) {
-      return NextResponse.json({ ok: false, error: "EMAIL_REQUIRED" }, { status: 401 });
-    }
-  } catch {
+  // Require session
+  const session = await verifySession(req).catch(() => null);
+  if (!session?.verified) {
     return NextResponse.json({ ok: false, error: "EMAIL_REQUIRED" }, { status: 401 });
   }
 
@@ -27,18 +23,15 @@ export async function GET(req: Request) {
   }
 
   const outPath = jobOutputPath(jobId, ext);
-
   if (!fs.existsSync(outPath)) {
-    return NextResponse.json({ ok: false, error: "File not ready" }, { status: 404 });
+    return NextResponse.json({ ok: false, error: "File not found" }, { status: 404 });
   }
 
-  const buf = fs.readFileSync(outPath);
-
-  return new NextResponse(buf, {
+  const data = fs.readFileSync(outPath);
+  return new NextResponse(data, {
     headers: {
       "Content-Type": "application/octet-stream",
-      "Content-Disposition": `attachment; filename="cleaned.${ext}"`,
-      "Cache-Control": "no-store",
+      "Content-Disposition": `attachment; filename="${jobId}.${ext}"`,
     },
   });
 }

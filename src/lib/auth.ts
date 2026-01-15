@@ -1,88 +1,80 @@
-import crypto from "crypto";
+import { SignJWT, jwtVerify } from "jose";
 
-export type Session = {
+export type SessionPayload = {
   leadId: string;
   email: string;
   verified: boolean;
 };
 
+const COOKIE_NAME = "meta_saas_session";
+
 export function getSessionCookieName() {
-  return process.env.SESSION_COOKIE_NAME || "meta_saas_session";
+  return COOKIE_NAME;
 }
 
-function base64urlEncode(buf: Buffer) {
-  return buf
-    .toString("base64")
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
-}
-
-function base64urlDecode(str: string) {
-  const pad = 4 - (str.length % 4 || 4);
-  const base64 = (str + "=".repeat(pad))
-    .replaceAll("-", "+")
-    .replaceAll("_", "/");
-  return Buffer.from(base64, "base64");
-}
-
-function hmacSha256(data: string, secret: string) {
-  return base64urlEncode(crypto.createHmac("sha256", secret).update(data).digest());
-}
-
-function getCookieFromHeader(cookieHeader: string, name: string) {
-  // parsing simple mais fiable
-  const parts = cookieHeader.split(";").map((p) => p.trim());
-  for (const part of parts) {
-    if (part.startsWith(name + "=")) return part.slice(name.length + 1);
-  }
-  return null;
-}
-
-/**
- * ✅ Signe une session dans un cookie (format: payload.signature)
- */
-export async function signSession(payload: Session) {
+function getSecret() {
   const secret = process.env.SESSION_SECRET;
-  if (!secret) throw new Error("Missing SESSION_SECRET");
+  if (!secret) throw new Error("Missing SESSION_SECRET env var");
+  return new TextEncoder().encode(secret);
+}
 
-  const json = JSON.stringify(payload);
-  const data = base64urlEncode(Buffer.from(json, "utf8"));
-  const sig = hmacSha256(data, secret);
-  return `${data}.${sig}`;
+function parseCookieHeader(cookieHeader: string | null) {
+  const out: means Record<string, string> = {};
+  if (!cookieHeader) return out;
+
+  cookieHeader.split(";").forEach((part) => {
+    const [k, ...rest] = part.trim().split("=");
+    if (!k) return;
+    out[k] = decodeURIComponent(rest.join("=") || "");
+  });
+
+  return out;
 }
 
 /**
- * ✅ Vérifie la session à partir d'un cookie.
- * IMPORTANT: accepte n'importe quel objet qui a `headers.get()`
- * donc Request, NextRequest, etc.
+ * ✅ sign a JWT session cookie
  */
-export async function verifySession(req: { headers: { get(name: string): string | null } }) {
-  try {
-    const secret = process.env.SESSION_SECRET;
-    if (!secret) return null;
+export async function signSession(payload: SessionPayload) {
+  const secret = getSecret();
+  const jwt = await new SignJWT(payload)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("7d")
+    .sign(secret);
 
-    const cookieName = getSessionCookieName();
-    const cookieHeader = req.headers.get("cookie") || "";
-    const token = getCookieFromHeader(cookieHeader, cookieName);
-    if (!token) return null;
+  return jwt;
+}
 
-    const [data, sig] = token.split(".");
-    if (!data || !sig) return null;
+/**
+ * ✅ verifySession can accept:
+ * - a Request/NextRequest (anything with headers.get)
+ * - OR a token string directly
+ */
+export async function verifySession(
+  input: { headers: { get(name: string): string | null } } | string
+): Promise<SessionPayload> {
+  const secret = getSecret();
 
-    const expected = hmacSha256(data, secret);
-    // timing safe compare
-    const a = Buffer.from(sig);
-    const b = Buffer.from(expected);
-    if (a.length !== b.length) return null;
-    if (!crypto.timingSafeEqual(a, b)) return null;
+  let token: string | null = null;
 
-    const decoded = base64urlDecode(data).toString("utf8");
-    const session = JSON.parse(decoded) as Session;
-
-    if (!session?.leadId || !session?.email) return null;
-    return session;
-  } catch {
-    return null;
+  if (typeof input === "string") {
+    token = input;
+  } else {
+    const cookieHeader = input.headers.get("cookie");
+    const cookies = parseCookieHeader(cookieHeader);
+    token = cookies[COOKIE_NAME] || null;
   }
+
+  if (!token) throw new Error("Missing session token");
+
+  const { payload } = await jwtVerify(token, secret);
+
+  // basic shape validation
+  const leadId = String((payload as any).leadId || "");
+  const email = String((payload as any).email || "");
+  const verified = Boolean((payload as any).verified);
+
+  if (!leadId || !email) throw new Error("Invalid session payload");
+
+  return { leadId, email, verified };
 }
