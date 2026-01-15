@@ -7,8 +7,14 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(request: Request): Promise<Response> {
-  // Client calls this with JSON
-  const body = (await request.json()) as HandleUploadBody;
+  let body: HandleUploadBody;
+
+  // Vercel Blob client calls this route with JSON
+  try {
+    body = (await request.json()) as HandleUploadBody;
+  } catch {
+    return NextResponse.json({ error: "INVALID_JSON" }, { status: 400 });
+  }
 
   // Require verified session to upload
   const session = await verifySession(request).catch(() => null);
@@ -21,9 +27,8 @@ export async function POST(request: Request): Promise<Response> {
       body,
       request,
 
-      // IMPORTANT: limit file types + size here if you want
-      onBeforeGenerateToken: async (pathname) => {
-        // You can enforce allowed file extensions
+      onBeforeGenerateToken: async (pathname: string) => {
+        // ✅ allow only common image/video formats
         const lower = pathname.toLowerCase();
         const allowed =
           lower.endsWith(".jpg") ||
@@ -39,10 +44,10 @@ export async function POST(request: Request): Promise<Response> {
           throw new Error("FILE_TYPE_NOT_ALLOWED");
         }
 
+        // ✅ keep it PUBLIC for now to remove all “private fetch” complexity.
+        // You can harden later once everything works.
         return {
-          // ✅ Use "public" for now (private complicates fetch). You can harden later.
           access: "public",
-          contentType: undefined,
           tokenPayload: JSON.stringify({
             leadId: session.leadId,
             email: session.email,
@@ -51,7 +56,7 @@ export async function POST(request: Request): Promise<Response> {
       },
 
       onUploadCompleted: async () => {
-        // Optional: log / track uploads
+        // optional
       },
     });
 

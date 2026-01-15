@@ -47,16 +47,12 @@ export function Dropzone({
     const timeout = setTimeout(() => controller.abort(), 55_000);
 
     try {
-      // ✅ Force pathname string (avoid overload mismatch)
-      const pathname = `${Date.now()}-${file.name}`;
-
-      // 1) Upload to Vercel Blob
-      const blob = await upload(pathname, file, {
-        access: "public",
+      // 1) ✅ Upload to Vercel Blob (avoids 413 on /api/jobs/scan)
+      const blob = await upload(file.name, file, {
         handleUploadUrl: "/api/blob/upload",
       });
 
-      // 2) Scan via JSON
+      // 2) ✅ Call scan with JSON (fast request)
       const res = await fetch("/api/jobs/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -87,9 +83,10 @@ export function Dropzone({
       console.error(e);
 
       if (e?.name === "AbortError") {
-        setErr("⏳ Timeout: server took too long. Check Vercel logs (scan).");
+        setErr("⏳ Timeout: server too slow. Check Vercel logs (scan).");
       } else {
-        setErr("Impossible d’analyser le fichier. Regarde les logs Vercel (upload/scan).");
+        // show real reason
+        setErr(`❌ ${e?.message || "Upload/scan failed. Check Vercel logs."}`);
       }
     } finally {
       clearTimeout(timeout);

@@ -19,7 +19,7 @@ function getSecret() {
 }
 
 function parseCookieHeader(cookieHeader: string | null) {
-  const out: means Record<string, string> = {};
+  const out: Record<string, string> = {};
   if (!cookieHeader) return out;
 
   cookieHeader.split(";").forEach((part) => {
@@ -36,22 +36,24 @@ function parseCookieHeader(cookieHeader: string | null) {
  */
 export async function signSession(payload: SessionPayload) {
   const secret = getSecret();
-  const jwt = await new SignJWT(payload)
+  return await new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("7d")
     .sign(secret);
-
-  return jwt;
 }
 
 /**
  * ✅ verifySession can accept:
- * - a Request/NextRequest (anything with headers.get)
+ * - Request/NextRequest (anything that has headers.get)
  * - OR a token string directly
+ *
+ * Overloads are IMPORTANT so TypeScript accepts both.
  */
+export function verifySession(input: string): Promise<SessionPayload>;
+export function verifySession(input: { headers: { get(name: string): string | null } }): Promise<SessionPayload>;
 export async function verifySession(
-  input: { headers: { get(name: string): string | null } } | string
+  input: string | { headers: { get(name: string): string | null } }
 ): Promise<SessionPayload> {
   const secret = getSecret();
 
@@ -69,7 +71,6 @@ export async function verifySession(
 
   const { payload } = await jwtVerify(token, secret);
 
-  // basic shape validation
   const leadId = String((payload as any).leadId || "");
   const email = String((payload as any).email || "");
   const verified = Boolean((payload as any).verified);

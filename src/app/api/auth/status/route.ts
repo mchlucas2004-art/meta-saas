@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { getSessionCookieName, verifySession } from "@/lib/auth";
+import { verifySession } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(req: Request) {
   try {
-    // Option A: just verify from request cookies
-    const session = await verifySession(req);
-    return NextResponse.json({ verified: !!session.verified, email: session.email });
+    const payload = await verifySession(req);
+    return NextResponse.json({ verified: true, email: payload.email });
   } catch {
     return NextResponse.json({ verified: false, email: null });
   }
