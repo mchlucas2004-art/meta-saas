@@ -2,7 +2,6 @@
 
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
-import { upload } from "@vercel/blob/client";
 
 export type ScanResult = {
   jobId: string;
@@ -29,8 +28,18 @@ export function Dropzone({
   const pick = () => inputRef.current?.click();
 
   function extFromName(name: string) {
-    const parts = name.split(".");
+    // protège si jamais le nom contient des params (rare mais bon)
+    const clean = name.split("?")[0] || name;
+    const parts = clean.split(".");
     return (parts[parts.length - 1] || "bin").toLowerCase();
+  }
+
+  async function safeText(res: Response) {
+    try {
+      return await res.text();
+    } catch {
+      return "";
+    }
   }
 
   async function scanFile(file: File) {
@@ -47,31 +56,69 @@ export function Dropzone({
     const timeout = setTimeout(() => controller.abort(), 55_000);
 
     try {
-      // 1) ✅ Upload to Vercel Blob (avoids 413 on /api/jobs/scan)
-      const blob = await upload(file.name, file, {
-        handleUploadUrl: "/api/blob/upload",
-      });
-
-      // 2) ✅ Call scan with JSON (fast request)
-      const res = await fetch("/api/jobs/scan", {
+      // 1) Demande une URL signée (presigned PUT) + l'URL publique/serving
+      const sigRes = await fetch("/api/upload-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
-          kind,
-          blobUrl: blob.url,
-          originalName: file.name,
-          ext: extFromName(file.name),
+          filename: file.name,
+          contentType: file.type || "application/octet-stream",
         }),
+      });
+
+      if (!sigRes.ok) {
+        const t = await safeText(sigRes);
+        throw new Error(t || `UPLOAD_URL_FAILED (${sigRes.status})`);
+      }
+
+      const data = (await sigRes.json()) as Partial<{
+        uploadUrl: string;
+        fileUrl: string;
+      }>;
+
+      if (!data.uploadUrl || !data.fileUrl) {
+        throw new Error("UPLOAD_URL_BAD_RESPONSE (missing uploadUrl/fileUrl)");
+      }
+
+      const uploadUrl = data.uploadUrl;
+      const fileUrl = data.fileUrl;
+
+      // 2) Upload direct vers R2 (IMPORTANT: signal + timeout)
+      const putRes = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+        },
+        body: file,
         signal: controller.signal,
       });
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(text || `Scan failed (${res.status})`);
+      if (!putRes.ok) {
+        const t = await safeText(putRes);
+        throw new Error(t || `UPLOAD_FAILED (${putRes.status})`);
       }
 
-      const json = (await res.json()) as Partial<ScanResult>;
-      if (!json.jobId) throw new Error("Missing jobId from API");
+      // 3) Lance le scan via URL (pas de gros body -> pas de 413)
+      const scanRes = await fetch("/api/jobs/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          kind,
+          fileUrl,
+          originalName: file.name,
+          ext: extFromName(file.name),
+        }),
+      });
+
+      if (!scanRes.ok) {
+        const t = await safeText(scanRes);
+        throw new Error(t || `SCAN_FAILED (${scanRes.status})`);
+      }
+
+      const json = (await scanRes.json()) as Partial<ScanResult>;
+      if (!json.jobId) throw new Error("SCAN_BAD_RESPONSE (missing jobId)");
 
       onScanned({
         jobId: json.jobId,
@@ -83,10 +130,11 @@ export function Dropzone({
       console.error(e);
 
       if (e?.name === "AbortError") {
-        setErr("⏳ Timeout: server too slow. Check Vercel logs (scan).");
+        setErr("⏳ Timeout : upload ou scan trop long. (Regarde logs Vercel)");
       } else {
-        // show real reason
-        setErr(`❌ ${e?.message || "Upload/scan failed. Check Vercel logs."}`);
+        setErr(
+          `Impossible d’analyser le fichier. ${e?.message ? `(${e.message})` : ""}`
+        );
       }
     } finally {
       clearTimeout(timeout);
