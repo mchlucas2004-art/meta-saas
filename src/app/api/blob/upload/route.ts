@@ -8,18 +8,20 @@ export const maxDuration = 60;
 
 export async function POST(request: Request) {
   try {
+    // ✅ protège l’upload (optionnel mais conseillé)
     const session = await verifySession(request);
     if (!session?.verified) {
-      return NextResponse.json({ error: "EMAIL_REQUIRED" }, { status: 401 });
+      return NextResponse.json({ ok: false, error: "EMAIL_REQUIRED" }, { status: 401 });
     }
 
     const body = (await request.json()) as HandleUploadBody;
 
     const jsonResponse = await handleUpload({
-      body,
       request,
-      onBeforeGenerateToken: async () => {
-        const maxMb = Number(process.env.MAX_FILE_MB || "200");
+      body,
+
+      onBeforeGenerateToken: async (pathname) => {
+        // ⚠️ sécurité + taille max autorisée côté token Blob
         return {
           allowedContentTypes: [
             "image/jpeg",
@@ -31,19 +33,27 @@ export async function POST(request: Request) {
             "video/quicktime",
             "video/webm",
           ],
-          maximumSizeInBytes: maxMb * 1024 * 1024,
-          tokenPayload: JSON.stringify({}),
+          // Mets une limite haute si tu veux supporter des gros fichiers
+          // (le vrai plafond dépend aussi de ton plan Vercel Blob)
+          maximumSizeInBytes: 1024 * 1024 * 1024, // 1GB
+          tokenPayload: JSON.stringify({
+            // tu peux mettre des infos si tu veux
+            verified: true,
+          }),
         };
       },
-      onUploadCompleted: async () => {
-        // rien
+
+      onUploadCompleted: async ({ blob }) => {
+        // Juste un log serveur utile
+        console.log("✅ Upload completed:", blob.url);
       },
     });
 
-    return NextResponse.json(jsonResponse);
+    return NextResponse.json({ ok: true, ...jsonResponse });
   } catch (e: any) {
+    console.error("❌ /api/blob/upload error:", e);
     return NextResponse.json(
-      { error: e?.message || "upload_error" },
+      { ok: false, error: e?.message || "UPLOAD_FAILED" },
       { status: 400 }
     );
   }
